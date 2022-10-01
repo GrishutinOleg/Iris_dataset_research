@@ -8,6 +8,7 @@ import org.apache.spark.ml.feature.MinMaxScaler
 import org.apache.spark.ml.classification.{RandomForestClassificationModel, RandomForestClassifier}
 import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
 import org.apache.spark.ml.feature.{IndexToString, StringIndexer, VectorIndexer}
+import org.apache.spark.ml.Pipeline
 
 object research extends App {
 
@@ -38,65 +39,62 @@ object research extends App {
   val numericColumns: Array[String] = rawDF.dtypes.filter(p => p._2.equals("DoubleType") || p._2.equals("IntegerType")).map(_._1)
   rawDF.select(numericColumns.map(col): _*).summary().show
 
+  val indexer = new StringIndexer()
+    .setInputCol("species")
+    .setOutputCol("indexedLabel")
+    .fit(rawDF)
 
+  val indexeddata = indexer.transform(rawDF)
+
+  val inputColSchema = indexeddata.schema(indexer.getOutputCol)
 
   val assembler = new VectorAssembler()
     .setInputCols(Array("sepal_length", "sepal_width", "petal_length", "petal_width"))
     .setOutputCol("features")
 
-  val dfvr = assembler.transform(rawDF)
-
-
+  val dfvr = assembler.transform(indexeddata)
 
   val scaler = new MinMaxScaler()
     .setInputCol("features")
     .setOutputCol("scaledFeatures")
 
-  val scalerModel = scaler.fit(dfvr)
-
-  val scaledData = scalerModel.transform(dfvr)
-
-  val readydata = scaledData.select("scaledFeatures", "species")
-
-  readydata.show()
-
-  val indexer = new StringIndexer()
-    .setInputCol("species")
-    .setOutputCol("indexedLabel")
-    .fit(readydata)
-
-  val indexeddata = indexer.transform(readydata)
-
-  val inputColSchema = indexeddata.schema(indexer.getOutputCol)
-
-  val Array(trainingData, testData) = indexeddata.randomSplit(Array(0.7, 0.3))
-
+  val scaledData = scaler.fit(dfvr).transform(dfvr)
 
   val rf = new RandomForestClassifier()
     .setLabelCol("indexedLabel")
     .setFeaturesCol("scaledFeatures")
     .setNumTrees(10)
 
-  val model = rf.fit(trainingData)
-
-  val predictions = model.transform(testData)
-
 
   val labelConvertedDF = new IndexToString()
     .setInputCol("prediction")
     .setOutputCol("predictedLabel")
     .setLabels(indexer.labelsArray(0))
-    .transform(predictions)
 
+  val pipeline = new Pipeline()
+    .setStages(Array(indexer,
+                     assembler,
+                     scaler,
+                     rf,
+                     labelConvertedDF
+    ))
 
-  labelConvertedDF.select("predictedLabel", "species", "probability", "prediction").show(10, truncate = false)
+  val Array(trainingData, testData) = rawDF.randomSplit(Array(0.7, 0.3))
+
+  val model = pipeline.fit(trainingData)
+
+  val predictions = model.transform(testData)
+
+  predictions.show(7)
+
+  predictions.select("predictedLabel", "species", "probability", "prediction").show(10, truncate = false)
 
   val evaluator = new MulticlassClassificationEvaluator()
     .setLabelCol("indexedLabel")
     .setPredictionCol("prediction")
     .setMetricName("accuracy")
   val accuracy = evaluator.evaluate(predictions)
-  println(s"Test Error = ${(1.0 - accuracy)}")
+  println(s"\n Test Error = ${(1.0 - accuracy)} \n")
 
   model.write.overwrite().save("src/main/outputmodel")
 
