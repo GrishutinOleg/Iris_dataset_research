@@ -72,7 +72,8 @@ object research extends App {
     .setLabels(indexer.labelsArray(0))
 
   val pipeline = new Pipeline()
-    .setStages(Array(indexer,
+    .setStages(Array(
+                     indexer,
                      assembler,
                      scaler,
                      rf,
